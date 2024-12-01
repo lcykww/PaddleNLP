@@ -26,7 +26,7 @@ from paddlenlp.peft.lora import LoRAConfig, LoRALinear, LoRAModel
 from paddlenlp.transformers import AutoModel, BertModel
 
 
-class TestMosLoraLayer(unittest.TestCase):
+class TestMoraLayer(unittest.TestCase):
     def test_r_raise_exception(self):
         with self.assertRaises(ValueError):
             LoRALinear(in_features=16, out_features=8, r=0, lora_dropout=0.1, lora_alpha=8, use_mora=True)
