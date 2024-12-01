@@ -74,7 +74,7 @@ from paddlenlp.utils.log import logger
 from paddlenlp.utils.tools import get_env_device
 
 # Fine-tune Environment Variables to support sharding stage1 overlap optimization.
-os.environ["USE_CASUAL_MASK"] = "False"
+os.environ["USE_CASUAL_MASK"] = "True"
 
 flash_mask_support_list = [LlamaForCausalLM, LlamaForCausalLMPipe, Qwen2ForCausalLM, Qwen2ForCausalLMPipe]
 
@@ -511,6 +511,7 @@ def create_peft_model(model_args, reft_args, training_args, dtype, model_config,
                 base_model_name_or_path=model_args.model_name_or_path,
                 use_quick_lora=model_args.use_quick_lora,
                 lora_use_mixer=model_args.lora_use_mixer,
+                use_mora=model_args.use_mora,
             )
             model = LoRAModel(model, lora_config)
         else:
