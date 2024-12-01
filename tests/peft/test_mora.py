@@ -91,7 +91,7 @@ class TestMoraLayer(unittest.TestCase):
         lora_layer_r8.unmerge()
 
 
-class TestMosLoraModel(unittest.TestCase):
+class TestMoraModel(unittest.TestCase):
     def test_lora_model_restore(self):
         lora_config = LoRAConfig(
             target_modules=[".*q_proj.*", ".*v_proj.*"],

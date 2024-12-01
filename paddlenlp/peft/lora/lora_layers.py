@@ -3,7 +3,7 @@
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
-#
+# mat
 #     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
@@ -168,7 +168,7 @@ class LoRALinear(nn.Linear):
         if self.cos is None or self.sin is None:
             inv_freq = 1.0 / (10000 ** (paddle.arange(0, r, 2, dtype=self._dtype) / r))
             t = paddle.arange(rb1, dtype=self._dtype)
-            freqs = paddle.matmul(t.unsqueeze(1), inv_freq.unsqueeze(0))
+            freqs = t.unsqueeze(1) @ inv_freq.unsqueeze(0)
             emb = paddle.concat([freqs, freqs], axis=-1)
             self.cos = paddle.unsqueeze(paddle.cos(emb), axis=0).astype(self._dtype)
             self.sin = paddle.unsqueeze(paddle.sin(emb), axis=0).astype(self._dtype)
@@ -182,7 +182,7 @@ class LoRALinear(nn.Linear):
         in_x = paddle.cast(in_x, dtype=self._dtype)
 
         # matmul with high rank matrix
-        out_x = paddle.matmul(in_x, self.lora_A)
+        out_x = in_x @ self.lora_A
 
         # reshape the output
         out_x = out_x.reshape([*x.shape[:-1], -1])[..., : self.out_features]
@@ -210,12 +210,12 @@ class LoRALinear(nn.Linear):
 
         # create RoPE
         if self.cos is None or self.sin is None:
-            inv_freq = 1.0 / (10000 ** (paddle.arange(0, r, 2) / r))
-            t = paddle.arange(rb1)
-            freqs = paddle.matmul(t.unsqueeze(1), inv_freq.unsqueeze(0))
+            inv_freq = 1.0 / (10000 ** (paddle.arange(0, r, 2, dtype=self._dtype) / r))
+            t = paddle.arange(rb1, dtype=self._dtype)
+            freqs = t.unsqueeze(1) @ inv_freq.unsqueeze(0)
             emb = paddle.concat([freqs, freqs], axis=-1)
-            self.cos = paddle.unsqueeze(paddle.cos(emb), axis=0).astype(self.lora_A.dtype)
-            self.sin = paddle.unsqueeze(paddle.sin(emb), axis=0).astype(self.lora_A.dtype)
+            self.cos = paddle.unsqueeze(paddle.cos(emb), axis=0).astype(self._dtype)
+            self.sin = paddle.unsqueeze(paddle.sin(emb), axis=0).astype(self._dtype)
 
         # create the weights after rotation
         aw2 = paddle.concat([self.lora_A[:, r // 2 :], -self.lora_A[:, : r // 2]], axis=1)
