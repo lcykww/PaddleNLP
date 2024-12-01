@@ -76,7 +76,7 @@ class LoRAConfig:
     do_qat: bool = field(default=False, metadata={"help": "Whether the lora model would do quant-aware training"})
     rslora: bool = field(default=False, metadata={"help": "Whether to use RsLoRA"})
     pissa: bool = field(default=False, metadata={"help": "Whether to use Pissa: https://arxiv.org/pdf/2404.02948.pdf"})
-    # 修改
+
     use_mora: bool = field(
         default=False, metadata={"help": "Whether to use MoRA: https://arxiv.org/pdf/2405.12130.pdf"}
     )

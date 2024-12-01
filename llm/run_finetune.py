@@ -74,7 +74,7 @@ from paddlenlp.utils.log import logger
 from paddlenlp.utils.tools import get_env_device
 
 # Fine-tune Environment Variables to support sharding stage1 overlap optimization.
-os.environ["USE_CASUAL_MASK"] = "True"
+os.environ["USE_CASUAL_MASK"] = "False"
 
 flash_mask_support_list = [LlamaForCausalLM, LlamaForCausalLMPipe, Qwen2ForCausalLM, Qwen2ForCausalLMPipe]
 

@@ -253,7 +253,6 @@ class LoRAModel(nn.Layer):
             )
             loaded_keys = sharded_metadata["all_checkpoint_keys"]
             expected_keys = set(lora_model.get_trainable_state_dict().keys())
-            # print(f"expected_keys: {expected_keys}")
             missing_keys = expected_keys - set(loaded_keys)
             if len(missing_keys) > 0:
                 raise ValueError(f"missing_keys: {missing_keys}")
@@ -647,7 +646,6 @@ class LoRAModel(nn.Layer):
         for name, weight in self.model.state_dict().items():
             # get lora parameter & QAT scale parameter
             if not weight.stop_gradient or "activation_quanter" in name or "weight_quanter" in name:
-                # print(f"{name}     ", weight.stop_gradient)
                 trainable_state_dict[name] = weight
         return trainable_state_dict
 
@@ -709,9 +707,6 @@ class LoRAModel(nn.Layer):
                     re.fullmatch(trainable_module, name) for trainable_module in self.lora_config.trainable_modules
                 ):
                     weight.stop_gradient = False
-
-        for name, param in self.model.named_parameters():
-            print(f"{name}: {'Trainable' if not param.stop_gradient else 'Frozen'}")
 
     def get_lora_model(self, model: Union[PretrainedModel, nn.Layer], lora_config: LoRAConfig):
 

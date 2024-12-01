@@ -83,7 +83,6 @@ class ModelConfig:
     lora_use_mixer: bool = field(
         default=False, metadata={"help": "Whether to use MosLoRA: https://arxiv.org/pdf/2406.11909"}
     )
-    # 修改
     use_mora: bool = field(
         default=False, metadata={"help": "Whether to use MoRA: https://arxiv.org/pdf/2405.12130.pdf"}
     )
