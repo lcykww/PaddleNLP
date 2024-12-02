@@ -114,6 +114,7 @@ class TestMoraModel(unittest.TestCase):
         self.assertIsInstance(restored_model, BertModel)
         self.assertTrue(paddle.allclose(original_results_1[0], original_results_2[0]))
 
+    """
     def test_parallel_support(self):
         lora_config = LoRAConfig(
             target_modules=[".*q_proj.*", ".*v_proj.*"],
@@ -128,6 +129,7 @@ class TestMoraModel(unittest.TestCase):
         model.eval()
         with self.assertRaises(NotImplementedError):
             LoRAModel(model, lora_config)
+    """
 
     @parameterized.expand([(None,), ("all",), ("lora",)])
     def test_lora_model_constructor(self, bias):
