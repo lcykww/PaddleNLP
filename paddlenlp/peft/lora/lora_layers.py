@@ -264,7 +264,7 @@ class LoRALinear(nn.Linear):
                 new_weight = self.weight + self.lora_A @ self.lora_AB @ self.lora_B * self.scaling
             elif self.use_mora:
                 delta_weight = self.get_delta_weight()
-                new_weight = self.base_layer.weight.data + delta_weight
+                new_weight = self.weight.data + delta_weight
             else:
                 new_weight = self.weight + self.lora_A @ self.lora_B * self.scaling
             self.weight.set_value(new_weight)
