@@ -132,9 +132,6 @@ class LoRALinear(nn.Linear):
             self.scaling = self.lora_alpha / self.r
         elif pissa:
             self.scaling = 1.0
-        # mora does not need lora_alpha
-        elif use_mora:
-            self.scaling = 1.0
         else:
             self.scaling = self.lora_alpha / math.sqrt(self.r)
 
@@ -238,7 +235,7 @@ class LoRALinear(nn.Linear):
         else:
             w = w[: self.out_features]
 
-        final_weight = w * self.scaling
+        final_weight = w
 
         return final_weight.T
 
