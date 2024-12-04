@@ -3,7 +3,7 @@
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
-#
+# mat
 #     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
@@ -65,11 +65,13 @@ class LoRALinear(nn.Linear):
         lora_plus_scale: float = 1.0,
         pissa: bool = False,
         lora_use_mixer: bool = False,
+        use_mora: bool = False,
         **kwargs
     ):
         nn.Linear.__init__(self, in_features, out_features, **kwargs)
         if not isinstance(r, int) or r <= 0:
             raise ValueError("Lora rank r should be a positive integer")
+        self.use_mora = use_mora
         self.r = r
         self.lora_alpha = lora_alpha
         # Optional dropout
@@ -83,30 +85,47 @@ class LoRALinear(nn.Linear):
         self.lora_use_mixer = lora_use_mixer
 
         # Actual trainable parameters
-        self.lora_A = self.create_parameter(
-            shape=[in_features, r],
-            dtype=self._dtype,
-            is_bias=False,
-            default_initializer=nn.initializer.KaimingUniform(negative_slope=math.sqrt(5), nonlinearity="leaky_relu"),
-        )
-        if self.lora_use_mixer:
-            self.lora_AB = self.create_parameter(
-                shape=[r, r],
+        if use_mora:  # reset the rank and create high rank matrix
+            self.in_features = in_features
+            self.out_features = out_features
+            new_r = int(math.sqrt((in_features + out_features) * r) + 0.5)
+            new_r = new_r // 2 * 2
+            self.r = new_r
+            self.lora_A = self.create_parameter(
+                shape=[self.r, self.r],
+                dtype=self._dtype,
+                is_bias=False,
+                default_initializer=nn.initializer.Constant(value=0.0),
+            )
+            self.cos = None
+            self.sin = None
+        else:
+            self.lora_A = self.create_parameter(
+                shape=[in_features, r],
                 dtype=self._dtype,
                 is_bias=False,
                 default_initializer=nn.initializer.KaimingUniform(
                     negative_slope=math.sqrt(5), nonlinearity="leaky_relu"
                 ),
             )
-        self.lora_B = self.create_parameter(
-            shape=[r, out_features],
-            dtype=self._dtype,
-            is_bias=False,
-            attr=paddle.ParamAttr(
-                initializer=paddle.nn.initializer.Constant(value=0.0),
-                learning_rate=lora_plus_scale,
-            ),
-        )
+            if self.lora_use_mixer:
+                self.lora_AB = self.create_parameter(
+                    shape=[r, r],
+                    dtype=self._dtype,
+                    is_bias=False,
+                    default_initializer=nn.initializer.KaimingUniform(
+                        negative_slope=math.sqrt(5), nonlinearity="leaky_relu"
+                    ),
+                )
+            self.lora_B = self.create_parameter(
+                shape=[r, out_features],
+                dtype=self._dtype,
+                is_bias=False,
+                attr=paddle.ParamAttr(
+                    initializer=paddle.nn.initializer.Constant(value=0.0),
+                    learning_rate=lora_plus_scale,
+                ),
+            )
         self.apply_pissa = False
 
         if not rslora and not pissa:
@@ -124,6 +143,101 @@ class LoRALinear(nn.Linear):
     @property
     def use_quick_lora(self):
         return self._use_quick_lora and self.training and not self.merged
+
+    def _apply_mora(self, x):
+        """应用MoRA变换"""
+        r = self.r
+
+        # Calculate grouping
+        sum_inter = self.in_features // r
+        rb1 = self.in_features // r if self.in_features % r == 0 else self.in_features // r + 1
+
+        # padding
+        if self.in_features % r != 0:
+            pad_size = r - self.in_features % r
+            x = paddle.concat([x, x[..., :pad_size]], axis=-1)
+            sum_inter += 1
+
+        # reshape the input to apply RoPE
+        in_x = x.reshape([*x.shape[:-1], sum_inter, r])
+
+        # create RoPE
+        if self.cos is None or self.sin is None:
+            inv_freq = 1.0 / (10000 ** (paddle.arange(0, r, 2, dtype=self._dtype) / r))
+            t = paddle.arange(rb1, dtype=self._dtype)
+            freqs = t.unsqueeze(1) @ inv_freq.unsqueeze(0)
+            emb = paddle.concat([freqs, freqs], axis=-1)
+            self.cos = paddle.unsqueeze(paddle.cos(emb), axis=0).astype(self._dtype)
+            self.sin = paddle.unsqueeze(paddle.sin(emb), axis=0).astype(self._dtype)
+            self.cos.stop_gradient = True
+            self.sin.stop_gradient = True
+
+        # apply RoPE rotation
+        rh_in_x = paddle.concat([-in_x[..., r // 2 :], in_x[..., : r // 2]], axis=-1)
+        # rh_in_x = paddle.cast(rh_in_x, dtype=paddle.paddle.bfloat16)
+        in_x = in_x * self.cos + rh_in_x * self.sin
+        in_x = paddle.cast(in_x, dtype=self._dtype)
+
+        # matmul with high rank matrix
+        out_x = in_x @ self.lora_A
+
+        # reshape the output
+        out_x = out_x.reshape([*x.shape[:-1], -1])[..., : self.out_features]
+        if out_x.shape[-1] < self.out_features:
+            repeat_time = self.out_features // out_x.shape[-1]
+            if self.out_features % out_x.shape[-1] != 0:
+                repeat_time += 1
+            out_x = paddle.concat([out_x] * repeat_time, axis=-1)[..., : self.out_features]
+
+        return out_x
+
+    def get_delta_weight(self):
+        """compute the delta weight，which is used to merge weights"""
+        r = self.r
+
+        # compute padding
+        pad_size = r - self.in_features % r if self.in_features % r != 0 else 0
+
+        # initialize weights
+        w = paddle.zeros([self.in_features + pad_size, self.in_features], dtype=self.lora_A.dtype)
+
+        # Count the number of tiles
+        rb1 = self.in_features // r if self.in_features % r == 0 else self.in_features // r + 1
+        rb2 = self.out_features // r if self.out_features % r == 0 else self.out_features // r + 1
+
+        # create RoPE
+        if self.cos is None or self.sin is None:
+            inv_freq = 1.0 / (10000 ** (paddle.arange(0, r, 2, dtype=self._dtype) / r))
+            t = paddle.arange(rb1, dtype=self._dtype)
+            freqs = t.unsqueeze(1) @ inv_freq.unsqueeze(0)
+            emb = paddle.concat([freqs, freqs], axis=-1)
+            self.cos = paddle.unsqueeze(paddle.cos(emb), axis=0).astype(self._dtype)
+            self.sin = paddle.unsqueeze(paddle.sin(emb), axis=0).astype(self._dtype)
+
+        # create the weights after rotation
+        aw2 = paddle.concat([self.lora_A[:, r // 2 :], -self.lora_A[:, : r // 2]], axis=1)
+
+        # apply RoPE
+        for i in range(rb1 - 1):
+            w[i * r : (i + 1) * r, i * r : (i + 1) * r] = aw2 * self.sin[:, i] + self.lora_A * self.cos[:, i]
+
+        # Process the last chunk that may be incomplete
+        i = rb1 - 1
+        w[i * r :, i * r :] = (aw2 * self.sin[:, i] + self.lora_A * self.cos[:, i])[:, : r - pad_size]
+
+        # padding
+        if pad_size > 0:
+            w[i * r :, :pad_size] = (aw2 * self.sin[:, i] + self.lora_A * self.cos[:, i])[:, r - pad_size :]
+
+        # reshape the weights
+        if self.in_features < self.out_features:
+            w = paddle.concat([w] * rb2, axis=0)[: self.out_features]
+        else:
+            w = w[: self.out_features]
+
+        final_weight = w
+
+        return final_weight.T
 
     def pissa_init(self, rank):
         weight = self.weight
@@ -148,6 +262,9 @@ class LoRALinear(nn.Linear):
         if not self.merged:
             if self.lora_use_mixer:
                 new_weight = self.weight + self.lora_A @ self.lora_AB @ self.lora_B * self.scaling
+            elif self.use_mora:
+                delta_weight = self.get_delta_weight()
+                new_weight = self.weight + delta_weight
             else:
                 new_weight = self.weight + self.lora_A @ self.lora_B * self.scaling
             self.weight.set_value(new_weight)
@@ -157,6 +274,9 @@ class LoRALinear(nn.Linear):
         if self.merged:
             if self.lora_use_mixer:
                 new_weight = self.weight - self.lora_A @ self.lora_AB @ self.lora_B * self.scaling
+            elif self.use_mora:
+                delta_weight = self.get_delta_weight()
+                new_weight = self.weight - delta_weight
             else:
                 new_weight = self.weight - self.lora_A @ self.lora_B * self.scaling
             self.weight.set_value(new_weight)
@@ -171,6 +291,11 @@ class LoRALinear(nn.Linear):
         elif self.use_quick_lora:
             # Use the quick lora implementation
             result = quick_lora(input, self.lora_A, self.lora_B, self.weight, self.bias, self.scaling)
+        elif self.use_mora:
+            result = F.linear(x=input, weight=self.weight, bias=self.bias, name=self.name)
+            input = self.lora_dropout(input)
+            mora_out = self._apply_mora(input)
+            result += mora_out
         else:
             result = F.linear(x=input, weight=self.weight, bias=self.bias, name=self.name)
             if self.lora_use_mixer:

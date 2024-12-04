@@ -253,7 +253,6 @@ class LoRAModel(nn.Layer):
             )
             loaded_keys = sharded_metadata["all_checkpoint_keys"]
             expected_keys = set(lora_model.get_trainable_state_dict().keys())
-
             missing_keys = expected_keys - set(loaded_keys)
             if len(missing_keys) > 0:
                 raise ValueError(f"missing_keys: {missing_keys}")
@@ -449,6 +448,7 @@ class LoRAModel(nn.Layer):
                 bias_attr=False if module.bias is None else None,
                 use_quick_lora=lora_config.use_quick_lora,
                 lora_use_mixer=lora_config.lora_use_mixer,
+                use_mora=lora_config.use_mora,
             )
         if isinstance(module, nn.Conv2D):
             lora_module = LoRAConv2D(
@@ -681,12 +681,20 @@ class LoRAModel(nn.Layer):
                 )
             ):
                 for name, weight in layer.state_dict().items():
-                    if self.lora_config.trainable_bias in ["lora", "all"] and "bias" in name:
-                        weight.stop_gradient = False
-                    elif "lora" in name:
-                        weight.stop_gradient = False
+                    if layer.use_mora:
+                        if self.lora_config.trainable_bias in ["lora_A", "all"] and "bias" in name:
+                            weight.stop_gradient = False
+                        elif "lora_A" in name:
+                            weight.stop_gradient = False
+                        else:
+                            weight.stop_gradient = True
                     else:
-                        weight.stop_gradient = True
+                        if self.lora_config.trainable_bias in ["lora", "all"] and "bias" in name:
+                            weight.stop_gradient = False
+                        elif "lora" in name:
+                            weight.stop_gradient = False
+                        else:
+                            weight.stop_gradient = True
             else:
                 for name, weight in layer.state_dict().items():
                     if self.lora_config.trainable_bias == "all" and "bias" in name:
