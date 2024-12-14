@@ -53,8 +53,7 @@ class MoraTest(LLMTest, unittest.TestCase):
     def test_mora(self):
         self.disable_static()
         paddle.set_default_dtype("float32")
-
-        mora_config = load_test_config(self.config_path, "lora", self.model_dir)
+        mora_config = load_test_config(self.config_path, "mora", self.model_dir)
         mora_config["output_dir"] = self.output_dir
         mora_config["dataset_name_or_path"] = self.data_dir
         # use_quick_lora
