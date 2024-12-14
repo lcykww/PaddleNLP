@@ -13,7 +13,6 @@
 # limitations under the License.
 import argparse
 import copy
-import math
 import os
 
 import numpy as np
@@ -107,12 +106,6 @@ def lora_process(name, layer, lora_config, state_dict, device, lora_state_dict=N
             lora_B = lora_B.to(target_device)
         if lora_use_mixer:
             lora_AB = lora_AB.to(target_device)
-    if not lora_config.rslora:
-        scaling = lora_config.lora_alpha / lora_config.r
-    elif use_mora:
-        scaling = 1.0
-    else:
-        scaling = lora_config.lora_alpha / math.sqrt(lora_config.r)
 
     if device == "cpu" and weight.dtype.name == "BF16":
         weight = weight.astype("float32")
@@ -120,10 +113,10 @@ def lora_process(name, layer, lora_config, state_dict, device, lora_state_dict=N
         if not use_mora:
             lora_B = lora_B.astype("float32")
         delta_weight = layer.get_delta_weight()
-        out = (weight + delta_weight * scaling).astype(lora_config.dtype)
+        out = (weight + delta_weight).astype(lora_config.dtype)
     else:
         delta_weight = layer.get_delta_weight()
-        out = (weight + delta_weight * scaling).cpu()
+        out = (weight + delta_weight).cpu()
 
     state_dict[name + ".weight"] = out
 
