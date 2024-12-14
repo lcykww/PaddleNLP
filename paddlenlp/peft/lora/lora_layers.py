@@ -161,7 +161,7 @@ class LoRALinear(nn.Linear):
     def RoPE_init(self, r, rb1):
         if self.cos is None or self.sin is None:
             inv_freq = 1.0 / (10000 ** (paddle.arange(0, r, 2, dtype=paddle.float32) / r))
-            t = paddle.arange(rb1, dtype=self._dtype)
+            t = paddle.arange(rb1, dtype=paddle.float32)
             freqs = t.unsqueeze(1) @ inv_freq.unsqueeze(0)
             emb = paddle.concat([freqs, freqs], axis=-1)
             self.cos = paddle.unsqueeze(paddle.cos(emb), axis=0).astype(self._dtype)
