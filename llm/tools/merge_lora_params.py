@@ -109,6 +109,8 @@ def lora_process(name, layer, lora_config, state_dict, device, lora_state_dict=N
             lora_AB = lora_AB.to(target_device)
     if not lora_config.rslora:
         scaling = lora_config.lora_alpha / lora_config.r
+    elif use_mora:
+        scaling = 1.0
     else:
         scaling = lora_config.lora_alpha / math.sqrt(lora_config.r)
 
@@ -118,10 +120,10 @@ def lora_process(name, layer, lora_config, state_dict, device, lora_state_dict=N
         if not use_mora:
             lora_B = lora_B.astype("float32")
         delta_weight = layer.get_delta_weight()
-        out = (weight + delta_weight).astype(lora_config.dtype)
+        out = (weight + delta_weight * scaling).astype(lora_config.dtype)
     else:
         delta_weight = layer.get_delta_weight()
-        out = (weight + delta_weight).astype(lora_config.dtype).cpu()
+        out = (weight + delta_weight * scaling).cpu()
 
     state_dict[name + ".weight"] = out
 
