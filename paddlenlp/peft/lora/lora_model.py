@@ -154,8 +154,9 @@ class LoRAModel(nn.Layer):
         if issubclass(type(self.model), PipelineLayer):
             self.is_pipelinemodel = True
             self.model._single_to_pp_mapping = None
-        if (self.lora_config.tensor_parallel_degree > 1 or self.is_pipelinemodel) and self.lora_config.lora_use_mixer:
-            raise NotImplementedError("lora_use_mixer is not supported in tensor parallel mode.")
+        if (self.lora_config.tensor_parallel_degree > 1 or self.is_pipelinemodel) and (
+                self.lora_config.lora_use_mixer or self.use_mora):
+            raise NotImplementedError("lora_use_mixer or mora is not supported in tensor parallel mode.")
         if self.lora_config.tensor_parallel_degree != self.model.config.tensor_parallel_degree:
             self.lora_config.tensor_parallel_degree = self.model.config.tensor_parallel_degree
             logger.warning(
@@ -294,8 +295,8 @@ class LoRAModel(nn.Layer):
             logger.info(f"Loading the LoRA weights from {lora_weight_path}")
 
             if (
-                lora_config_tensor_parallel_degree > 1
-                and lora_config_tensor_parallel_degree != model.config.tensor_parallel_degree
+                    lora_config_tensor_parallel_degree > 1
+                    and lora_config_tensor_parallel_degree != model.config.tensor_parallel_degree
             ):
                 raise NotImplementedError(
                     f"{lora_config_tensor_parallel_degree} is not equal to {model.config.tensor_parallel_degree}. Please merge LoRA weights first."
@@ -658,43 +659,35 @@ class LoRAModel(nn.Layer):
             else:
                 trainable_numel += np.prod(weight.shape)
         logger.debug(
-            f"Frozen parameters: {freeze_numel:.2e} || Trainable parameters:{trainable_numel:.2e} || Total parameters:{freeze_numel+trainable_numel:.2e}|| Trainable:{trainable_numel / (freeze_numel+trainable_numel):.2%}"
+            f"Frozen parameters: {freeze_numel:.2e} || Trainable parameters:{trainable_numel:.2e} || Total parameters:{freeze_numel + trainable_numel:.2e}|| Trainable:{trainable_numel / (freeze_numel + trainable_numel):.2%}"
         )
 
     def mark_only_lora_as_trainable(self) -> None:
         for _, layer in self.model.named_sublayers():
             if (
-                isinstance(layer, LoRALinear)
-                or isinstance(layer, LoRAConv2D)
-                or isinstance(layer, ColumnParallelLoRALinear)
-                or isinstance(layer, RowParallelLoRALinear)
-                or isinstance(layer, ColumnSequenceParallelLoRALinear)
-                or isinstance(layer, RowSequenceParallelLoRALinear)
-                or (QuantizationLoRALinear is not None and isinstance(layer, QuantizationLoRALinear))
-                or (
+                    isinstance(layer, LoRALinear)
+                    or isinstance(layer, LoRAConv2D)
+                    or isinstance(layer, ColumnParallelLoRALinear)
+                    or isinstance(layer, RowParallelLoRALinear)
+                    or isinstance(layer, ColumnSequenceParallelLoRALinear)
+                    or isinstance(layer, RowSequenceParallelLoRALinear)
+                    or (QuantizationLoRALinear is not None and isinstance(layer, QuantizationLoRALinear))
+                    or (
                     ColumnParallelQuantizationLoRALinear is not None
                     and isinstance(layer, ColumnParallelQuantizationLoRALinear)
-                )
-                or (
+            )
+                    or (
                     RowParallelQuantizationLoRALinear is not None
                     and isinstance(layer, RowParallelQuantizationLoRALinear)
-                )
+            )
             ):
                 for name, weight in layer.state_dict().items():
-                    if layer.use_mora:
-                        if self.lora_config.trainable_bias in ["lora_A", "all"] and "bias" in name:
-                            weight.stop_gradient = False
-                        elif "lora_A" in name:
-                            weight.stop_gradient = False
-                        else:
-                            weight.stop_gradient = True
+                    if self.lora_config.trainable_bias in ["lora", "all"] and "bias" in name:
+                        weight.stop_gradient = False
+                    elif "lora" in name:
+                        weight.stop_gradient = False
                     else:
-                        if self.lora_config.trainable_bias in ["lora", "all"] and "bias" in name:
-                            weight.stop_gradient = False
-                        elif "lora" in name:
-                            weight.stop_gradient = False
-                        else:
-                            weight.stop_gradient = True
+                        weight.stop_gradient = True
             else:
                 for name, weight in layer.state_dict().items():
                     if self.lora_config.trainable_bias == "all" and "bias" in name:
@@ -704,7 +697,7 @@ class LoRAModel(nn.Layer):
         if self.lora_config.trainable_modules is not None:
             for name, weight in self.model.state_dict().items():
                 if any(
-                    re.fullmatch(trainable_module, name) for trainable_module in self.lora_config.trainable_modules
+                        re.fullmatch(trainable_module, name) for trainable_module in self.lora_config.trainable_modules
                 ):
                     weight.stop_gradient = False
 
@@ -715,8 +708,8 @@ class LoRAModel(nn.Layer):
         elif isinstance(lora_config.target_modules, str):
             target_modules = [lora_config.target_modules]
             if lora_config.enable_lora_list is None or (
-                isinstance(lora_config.enable_lora_list, List)
-                and all(isinstance(item, bool) for item in lora_config.enable_lora_list)
+                    isinstance(lora_config.enable_lora_list, List)
+                    and all(isinstance(item, bool) for item in lora_config.enable_lora_list)
             ):
                 enable_lora_list = [lora_config.enable_lora_list]
             else:
@@ -735,8 +728,8 @@ class LoRAModel(nn.Layer):
                     )
                 for enable_lora in enable_lora_list:
                     if not (
-                        enable_lora is None
-                        or (isinstance(enable_lora, List) and all(isinstance(item, bool) for item in enable_lora))
+                            enable_lora is None
+                            or (isinstance(enable_lora, List) and all(isinstance(item, bool) for item in enable_lora))
                     ):
                         raise TypeError(
                             f"Invalid `enable_lora_list` value: {lora_config.enable_lora_list}. Since `target_modules` is `List[str]`, `enable_lora_list` must be `None` or  `List[Optional[List[bool]]]`"
@@ -760,20 +753,20 @@ class LoRAModel(nn.Layer):
             if isinstance(layer, LoRALinear):
                 self._find_and_restore_module(layer_name)
             elif (
-                isinstance(layer, ColumnParallelLoRALinear)
-                or isinstance(layer, ColumnSequenceParallelLoRALinear)
-                or isinstance(layer, LoRAConv2D)
-                or isinstance(layer, RowParallelLoRALinear)
-                or isinstance(layer, RowSequenceParallelLoRALinear)
-                or (QuantizationLoRALinear is not None and isinstance(layer, QuantizationLoRALinear))
-                or (
-                    ColumnParallelQuantizationLoRALinear is not None
-                    and isinstance(layer, ColumnParallelQuantizationLoRALinear)
-                )
-                or (
-                    RowParallelQuantizationLoRALinear is not None
-                    and isinstance(layer, RowParallelQuantizationLoRALinear)
-                )
+                    isinstance(layer, ColumnParallelLoRALinear)
+                    or isinstance(layer, ColumnSequenceParallelLoRALinear)
+                    or isinstance(layer, LoRAConv2D)
+                    or isinstance(layer, RowParallelLoRALinear)
+                    or isinstance(layer, RowSequenceParallelLoRALinear)
+                    or (QuantizationLoRALinear is not None and isinstance(layer, QuantizationLoRALinear))
+                    or (
+                            ColumnParallelQuantizationLoRALinear is not None
+                            and isinstance(layer, ColumnParallelQuantizationLoRALinear)
+                    )
+                    or (
+                            RowParallelQuantizationLoRALinear is not None
+                            and isinstance(layer, RowParallelQuantizationLoRALinear)
+                    )
             ):
                 raise NotImplementedError(f"{layer} restoration is not supported yet.")
         return self.model
@@ -800,14 +793,14 @@ class LoRAModel(nn.Layer):
             layer.eval()
 
     def save_to_aistudio(
-        self,
-        repo_id,
-        private=True,
-        license="Apache License 2.0",
-        exist_ok=True,
-        subfolder=None,
-        merge_tensor_parallel=False,
-        **kwargs
+            self,
+            repo_id,
+            private=True,
+            license="Apache License 2.0",
+            exist_ok=True,
+            subfolder=None,
+            merge_tensor_parallel=False,
+            **kwargs
     ):
         """
         Uploads all elements of this model to a new AiStudio Hub repository.

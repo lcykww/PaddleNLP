@@ -54,22 +54,22 @@ class MoraTest(LLMTest, unittest.TestCase):
         self.disable_static()
         paddle.set_default_dtype("float32")
 
-        lora_config = load_test_config(self.config_path, "lora", self.model_dir)
-        lora_config["output_dir"] = self.output_dir
-        lora_config["dataset_name_or_path"] = self.data_dir
+        mora_config = load_test_config(self.config_path, "lora", self.model_dir)
+        mora_config["output_dir"] = self.output_dir
+        mora_config["dataset_name_or_path"] = self.data_dir
         # use_quick_lora
-        lora_config["use_quick_lora"] = False
+        mora_config["use_quick_lora"] = False
 
-        with argv_context_guard(lora_config):
+        with argv_context_guard(mora_config):
             from run_finetune import main
 
             main()
 
         # merge weights
         merge_lora_weights_config = {
-            "lora_path": lora_config["output_dir"],
-            "model_name_or_path": lora_config["model_name_or_path"],
-            "output_path": lora_config["output_dir"],
+            "lora_path": mora_config["output_dir"],
+            "model_name_or_path": mora_config["model_name_or_path"],
+            "output_path": mora_config["output_dir"],
         }
         with argv_context_guard(merge_lora_weights_config):
             from tools.merge_mora_params import merge

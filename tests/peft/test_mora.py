@@ -32,36 +32,36 @@ class TestMoraLayer(unittest.TestCase):
             LoRALinear(in_features=16, out_features=8, r=0, lora_dropout=0.1, lora_alpha=8, use_mora=True)
 
     def test_forward(self):
-        lora_layer = LoRALinear(in_features=16, out_features=8, r=4, lora_dropout=0.1, lora_alpha=8, use_mora=True)
+        mora_layer = LoRALinear(in_features=16, out_features=8, r=4, lora_dropout=0.1, lora_alpha=8, use_mora=True)
         x = paddle.randn([2, 4, 16], "float32")
-        output = lora_layer(x)
-        self.assertFalse(lora_layer.lora_A.stop_gradient)
-        self.assertTrue(lora_layer.weight.stop_gradient)
-        self.assertFalse(lora_layer.bias.stop_gradient)
+        output = mora_layer(x)
+        self.assertFalse(mora_layer.lora_A.stop_gradient)
+        self.assertTrue(mora_layer.weight.stop_gradient)
+        self.assertFalse(mora_layer.bias.stop_gradient)
         self.assertEqual(output.shape, [2, 4, 8])
 
     def test_train_eval(self):
         x = paddle.randn([2, 4, 16], "float32")
-        lora_layer = LoRALinear(in_features=16, out_features=8, r=4, use_mora=True)
-        lora_layer.train()
-        train_result = lora_layer(x)
-        train_weight = copy.deepcopy(lora_layer.weight)  # deep copy since this is a pointer
-        lora_layer.eval()
-        eval_result = lora_layer(x)
-        eval_weight = lora_layer.weight
+        mora_layer = LoRALinear(in_features=16, out_features=8, r=4, use_mora=True)
+        mora_layer.train()
+        train_result = mora_layer(x)
+        train_weight = copy.deepcopy(mora_layer.weight)  # deep copy since this is a pointer
+        mora_layer.eval()
+        eval_result = mora_layer(x)
+        eval_weight = mora_layer.weight
         self.assertTrue(paddle.allclose(train_result, eval_result))
         self.assertTrue(paddle.allclose(train_weight, eval_weight))
 
     def test_save_load(self):
         with TemporaryDirectory() as tempdir:
-            lora_layer = LoRALinear(in_features=16, out_features=8, r=4, use_mora=True)
+            mora_layer = LoRALinear(in_features=16, out_features=8, r=4, use_mora=True)
             weights_path = os.path.join(tempdir, "model.pdparams")
-            paddle.save(lora_layer.state_dict(), weights_path)
-            new_lora_layer = LoRALinear(in_features=16, out_features=8, r=4, use_mora=True)
+            paddle.save(mora_layer.state_dict(), weights_path)
+            new_mora_layer = LoRALinear(in_features=16, out_features=8, r=4, use_mora=True)
             state_dict = paddle.load(weights_path)
-            new_lora_layer.set_dict(state_dict)
+            new_mora_layer.set_dict(state_dict)
             x = paddle.randn([2, 4, 16], "float32")
-            self.assertTrue(paddle.allclose(new_lora_layer(x), lora_layer(x)))
+            self.assertTrue(paddle.allclose(new_mora_layer(x), mora_layer(x)))
 
     def test_load_regular_linear(self):
         with TemporaryDirectory() as tempdir:
@@ -70,30 +70,30 @@ class TestMoraLayer(unittest.TestCase):
             paddle.save(regular_linear.state_dict(), weights_path)
             state_dict = paddle.load(weights_path)
             # should be identical to regular linear
-            lora_layer_r8 = LoRALinear(in_features=16, out_features=8, r=8, use_mora=True)
-            lora_layer_r4 = LoRALinear(in_features=16, out_features=8, r=4, use_mora=True)
-            lora_layer_r8.set_dict(state_dict)
-            lora_layer_r4.set_dict(state_dict)
+            mora_layer_r8 = LoRALinear(in_features=16, out_features=8, r=8, use_mora=True)
+            mora_layer_r4 = LoRALinear(in_features=16, out_features=8, r=4, use_mora=True)
+            mora_layer_r8.set_dict(state_dict)
+            mora_layer_r4.set_dict(state_dict)
             x = paddle.randn([2, 4, 16], "float32")
-            self.assertTrue(paddle.allclose(lora_layer_r8(x), regular_linear(x)))
-            self.assertTrue(paddle.allclose(lora_layer_r4(x), regular_linear(x)))
+            self.assertTrue(paddle.allclose(mora_layer_r8(x), regular_linear(x)))
+            self.assertTrue(paddle.allclose(mora_layer_r4(x), regular_linear(x)))
 
     def test_merge(self):
-        lora_layer_r8 = LoRALinear(in_features=16, out_features=8, r=8, use_mora=True)
-        lora_layer_r8.merge()
+        mora_layer_r8 = LoRALinear(in_features=16, out_features=8, r=8, use_mora=True)
+        mora_layer_r8.merge()
 
     def test_unmerge(self):
-        lora_layer_r8 = LoRALinear(in_features=16, out_features=8, r=8, use_mora=True)
-        lora_layer_r8.merged = True
-        lora_layer_r8.unmerge()
-        lora_layer_r8 = LoRALinear(in_features=16, out_features=8, r=8)
-        lora_layer_r8.merged = True
-        lora_layer_r8.unmerge()
+        mora_layer_r8 = LoRALinear(in_features=16, out_features=8, r=8, use_mora=True)
+        mora_layer_r8.merged = True
+        mora_layer_r8.unmerge()
+        mora_layer_r8 = LoRALinear(in_features=16, out_features=8, r=8)
+        mora_layer_r8.merged = True
+        mora_layer_r8.unmerge()
 
 
 class TestMoraModel(unittest.TestCase):
-    def test_lora_model_restore(self):
-        lora_config = LoRAConfig(
+    def test_mora_model_restore(self):
+        mora_config = LoRAConfig(
             target_modules=[".*q_proj.*", ".*v_proj.*"],
             r=4,
             lora_alpha=8,
@@ -105,8 +105,8 @@ class TestMoraModel(unittest.TestCase):
         input_ids = paddle.to_tensor(np.random.randint(100, 200, [1, 20]))
         model.eval()
         original_results_1 = model(input_ids)
-        lora_model = LoRAModel(model, lora_config)
-        restored_model = lora_model.restore_original_model()
+        mora_model = LoRAModel(model, mora_config)
+        restored_model = mora_model.restore_original_model()
         restored_model.eval()
         original_results_2 = restored_model(input_ids)
         self.assertIsNotNone(original_results_1)
@@ -115,8 +115,8 @@ class TestMoraModel(unittest.TestCase):
         self.assertTrue(paddle.allclose(original_results_1[0], original_results_2[0]))
 
     @parameterized.expand([(None,), ("all",), ("lora",)])
-    def test_lora_model_constructor(self, bias):
-        lora_config = LoRAConfig(
+    def test_mora_model_constructor(self, bias):
+        mora_config = LoRAConfig(
             target_modules=[".*q_proj.*", ".*v_proj.*"],
             r=4,
             lora_alpha=8,
@@ -129,13 +129,13 @@ class TestMoraModel(unittest.TestCase):
         model = AutoModel.from_pretrained(
             "__internal_testing__/tiny-random-bert", hidden_dropout_prob=0, attention_probs_dropout_prob=0
         )
-        lora_model = LoRAModel(model, lora_config)
-        lora_model.mark_only_lora_as_trainable()
-        for name, weight in lora_model.state_dict().items():
-            if any([re.fullmatch(target_module, name) for target_module in lora_config.target_modules]):
-                if "lora_A" in name:
+        mora_model = LoRAModel(model, mora_config)
+        mora_model.mark_only_lora_as_trainable()
+        for name, weight in mora_model.state_dict().items():
+            if any([re.fullmatch(target_module, name) for target_module in mora_config.target_modules]):
+                if "lora" in name:
                     self.assertFalse(weight.stop_gradient)
-                elif "bias" in name and bias in ["lora_A", "all"]:
+                elif "bias" in name and bias in ["lora", "all"]:
                     self.assertFalse(weight.stop_gradient)
                 else:
                     self.assertTrue(weight.stop_gradient)
@@ -145,48 +145,48 @@ class TestMoraModel(unittest.TestCase):
                 else:
                     self.assertTrue(weight.stop_gradient)
         input_ids = paddle.to_tensor(np.random.randint(100, 200, [1, 20]))
-        lora_model.train()
-        train_forward_results = lora_model(input_ids)
+        mora_model.train()
+        train_forward_results = mora_model(input_ids)
         self.assertIsNotNone(train_forward_results)
-        lora_model.eval()
-        eval_forward_results = lora_model(input_ids)
+        mora_model.eval()
+        eval_forward_results = mora_model(input_ids)
         self.assertIsNotNone(eval_forward_results)
         self.assertTrue(paddle.allclose(train_forward_results[0], eval_forward_results[0]))
 
-    def test_lora_model_save_load(self):
+    def test_mora_model_save_load(self):
         with TemporaryDirectory() as tempdir:
             input_ids = paddle.to_tensor(np.random.randint(100, 200, [1, 20]))
-            lora_config = LoRAConfig(target_modules=[".*q_proj.*", ".*v_proj.*"], r=4, lora_alpha=8, use_mora=True)
+            mora_config = LoRAConfig(target_modules=[".*q_proj.*", ".*v_proj.*"], r=4, lora_alpha=8, use_mora=True)
             model = AutoModel.from_pretrained("__internal_testing__/tiny-random-bert")
-            lora_model = LoRAModel(model, lora_config)
-            lora_model.eval()
-            original_results = lora_model(input_ids)
-            lora_model.save_pretrained(tempdir)
+            mora_model = LoRAModel(model, mora_config)
+            mora_model.eval()
+            original_results = mora_model(input_ids)
+            mora_model.save_pretrained(tempdir)
 
-            loaded_lora_model = LoRAModel.from_pretrained(model, tempdir)
-            loaded_lora_model.eval()
-            loaded_results = loaded_lora_model(input_ids)
+            loaded_mora_model = LoRAModel.from_pretrained(model, tempdir)
+            loaded_mora_model.eval()
+            loaded_results = loaded_mora_model(input_ids)
             self.assertTrue(paddle.allclose(original_results[0], loaded_results[0]))
 
-            config_loaded_lora_model = LoRAModel.from_pretrained(model, tempdir, lora_config=lora_config)
-            config_loaded_lora_model.eval()
-            config_loaded_results = config_loaded_lora_model(input_ids)
+            config_loaded_mora_model = LoRAModel.from_pretrained(model, tempdir, lora_config=mora_config)
+            config_loaded_mora_model.eval()
+            config_loaded_results = config_loaded_mora_model(input_ids)
             self.assertTrue(paddle.allclose(original_results[0], config_loaded_results[0]))
 
     def test_lora_module_raise_exception(self):
-        lora_config = LoRAConfig(target_modules=[".*norm1.*"], r=4, lora_alpha=8, enable_lora_list=None, use_mora=True)
+        mora_config = LoRAConfig(target_modules=[".*norm1.*"], r=4, lora_alpha=8, enable_lora_list=None, use_mora=True)
         model = AutoModel.from_pretrained("__internal_testing__/tiny-random-bert")
         with self.assertRaises(ValueError):
-            LoRAModel(model, lora_config)
+            LoRAModel(model, mora_config)
 
 
 class TestMoraConfig(unittest.TestCase):
     def test_save_load(self):
         with TemporaryDirectory() as tempdir:
-            lora_config = LoRAConfig()
-            lora_config.save_pretrained(tempdir)
-            loaded_lora_config = LoRAConfig.from_pretrained(tempdir)
-            self.assertEqual(lora_config, loaded_lora_config)
+            mora_config = LoRAConfig()
+            mora_config.save_pretrained(tempdir)
+            loaded_mora_config = LoRAConfig.from_pretrained(tempdir)
+            self.assertEqual(mora_config, loaded_mora_config)
 
 
 if __name__ == "__main__":

@@ -40,7 +40,6 @@ except:
     ReduceScatterOp = None
     mark_as_sequence_parallel_parameter = None
 
-
 from ...transformers.mc2_parallel_linear import (
     MC2ColumnParallelCoreLinear,
     MC2ColumnSeqParallelCoreLinear,
@@ -54,19 +53,19 @@ from .utils import rng_ctx
 class LoRALinear(nn.Linear):
     # LoRA implemented in a dense layer
     def __init__(
-        self,
-        in_features: int,
-        out_features: int,
-        r: int = 0,
-        lora_alpha: int = 1,
-        lora_dropout: float = 0.0,
-        use_quick_lora: bool = False,
-        rslora: bool = False,
-        lora_plus_scale: float = 1.0,
-        pissa: bool = False,
-        lora_use_mixer: bool = False,
-        use_mora: bool = False,
-        **kwargs
+            self,
+            in_features: int,
+            out_features: int,
+            r: int = 0,
+            lora_alpha: int = 1,
+            lora_dropout: float = 0.0,
+            use_quick_lora: bool = False,
+            rslora: bool = False,
+            lora_plus_scale: float = 1.0,
+            pissa: bool = False,
+            lora_use_mixer: bool = False,
+            use_mora: bool = False,
+            **kwargs
     ):
         nn.Linear.__init__(self, in_features, out_features, **kwargs)
         if not isinstance(r, int) or r <= 0:
@@ -130,7 +129,7 @@ class LoRALinear(nn.Linear):
 
         if not rslora and not pissa:
             self.scaling = self.lora_alpha / self.r
-        elif pissa:
+        elif pissa or use_mora:
             self.scaling = 1.0
         else:
             self.scaling = self.lora_alpha / math.sqrt(self.r)
@@ -139,105 +138,6 @@ class LoRALinear(nn.Linear):
         self.weight.stop_gradient = True
         self._use_quick_lora = use_quick_lora and lora_dropout == 0.0
         self.disable_lora = False
-
-    @property
-    def use_quick_lora(self):
-        return self._use_quick_lora and self.training and not self.merged
-
-    def _apply_mora(self, x):
-        """应用MoRA变换"""
-        r = self.r
-
-        # Calculate grouping
-        sum_inter = self.in_features // r
-        rb1 = self.in_features // r if self.in_features % r == 0 else self.in_features // r + 1
-
-        # padding
-        if self.in_features % r != 0:
-            pad_size = r - self.in_features % r
-            x = paddle.concat([x, x[..., :pad_size]], axis=-1)
-            sum_inter += 1
-
-        # reshape the input to apply RoPE
-        in_x = x.reshape([*x.shape[:-1], sum_inter, r])
-
-        # create RoPE
-        if self.cos is None or self.sin is None:
-            inv_freq = 1.0 / (10000 ** (paddle.arange(0, r, 2, dtype=self._dtype) / r))
-            t = paddle.arange(rb1, dtype=self._dtype)
-            freqs = t.unsqueeze(1) @ inv_freq.unsqueeze(0)
-            emb = paddle.concat([freqs, freqs], axis=-1)
-            self.cos = paddle.unsqueeze(paddle.cos(emb), axis=0).astype(self._dtype)
-            self.sin = paddle.unsqueeze(paddle.sin(emb), axis=0).astype(self._dtype)
-            self.cos.stop_gradient = True
-            self.sin.stop_gradient = True
-
-        # apply RoPE rotation
-        rh_in_x = paddle.concat([-in_x[..., r // 2 :], in_x[..., : r // 2]], axis=-1)
-        # rh_in_x = paddle.cast(rh_in_x, dtype=paddle.paddle.bfloat16)
-        in_x = in_x * self.cos + rh_in_x * self.sin
-        in_x = paddle.cast(in_x, dtype=self._dtype)
-
-        # matmul with high rank matrix
-        out_x = in_x @ self.lora_A
-
-        # reshape the output
-        out_x = out_x.reshape([*x.shape[:-1], -1])[..., : self.out_features]
-        if out_x.shape[-1] < self.out_features:
-            repeat_time = self.out_features // out_x.shape[-1]
-            if self.out_features % out_x.shape[-1] != 0:
-                repeat_time += 1
-            out_x = paddle.concat([out_x] * repeat_time, axis=-1)[..., : self.out_features]
-
-        return out_x
-
-    def get_delta_weight(self):
-        """compute the delta weight，which is used to merge weights"""
-        r = self.r
-
-        # compute padding
-        pad_size = r - self.in_features % r if self.in_features % r != 0 else 0
-
-        # initialize weights
-        w = paddle.zeros([self.in_features + pad_size, self.in_features], dtype=self.lora_A.dtype)
-
-        # Count the number of tiles
-        rb1 = self.in_features // r if self.in_features % r == 0 else self.in_features // r + 1
-        rb2 = self.out_features // r if self.out_features % r == 0 else self.out_features // r + 1
-
-        # create RoPE
-        if self.cos is None or self.sin is None:
-            inv_freq = 1.0 / (10000 ** (paddle.arange(0, r, 2, dtype=self._dtype) / r))
-            t = paddle.arange(rb1, dtype=self._dtype)
-            freqs = t.unsqueeze(1) @ inv_freq.unsqueeze(0)
-            emb = paddle.concat([freqs, freqs], axis=-1)
-            self.cos = paddle.unsqueeze(paddle.cos(emb), axis=0).astype(self._dtype)
-            self.sin = paddle.unsqueeze(paddle.sin(emb), axis=0).astype(self._dtype)
-
-        # create the weights after rotation
-        aw2 = paddle.concat([self.lora_A[:, r // 2 :], -self.lora_A[:, : r // 2]], axis=1)
-
-        # apply RoPE
-        for i in range(rb1 - 1):
-            w[i * r : (i + 1) * r, i * r : (i + 1) * r] = aw2 * self.sin[:, i] + self.lora_A * self.cos[:, i]
-
-        # Process the last chunk that may be incomplete
-        i = rb1 - 1
-        w[i * r :, i * r :] = (aw2 * self.sin[:, i] + self.lora_A * self.cos[:, i])[:, : r - pad_size]
-
-        # padding
-        if pad_size > 0:
-            w[i * r :, :pad_size] = (aw2 * self.sin[:, i] + self.lora_A * self.cos[:, i])[:, r - pad_size :]
-
-        # reshape the weights
-        if self.in_features < self.out_features:
-            w = paddle.concat([w] * rb2, axis=0)[: self.out_features]
-        else:
-            w = w[: self.out_features]
-
-        final_weight = w
-
-        return final_weight.T
 
     def pissa_init(self, rank):
         weight = self.weight
@@ -258,27 +158,102 @@ class LoRALinear(nn.Linear):
         weight = res.astype(dtype)
         self.weight.set_value(weight)
 
+    def RoPE_init(self, r, rb1):
+        if self.cos is None or self.sin is None:
+            inv_freq = 1.0 / (10000 ** (paddle.arange(0, r, 2, dtype=paddle.float32) / r))
+            t = paddle.arange(rb1, dtype=paddle.float32)
+            freqs = t.unsqueeze(1) @ inv_freq.unsqueeze(0)
+            emb = paddle.concat([freqs, freqs], axis=-1)
+            self.cos = paddle.unsqueeze(paddle.cos(emb), axis=0).astype(paddle.float32)
+            self.sin = paddle.unsqueeze(paddle.sin(emb), axis=0).astype(paddle.float32)
+
+    @property
+    def use_quick_lora(self):
+        return self._use_quick_lora and self.training and not self.merged
+
+    def _apply_mora(self, x):
+        r = self.r
+
+        # Calculate grouping
+        sum_inter = self.in_features // r
+        rb1 = self.in_features // r if self.in_features % r == 0 else self.in_features // r + 1
+        # padding
+        if self.in_features % r != 0:
+            pad_size = r - self.in_features % r
+            x = paddle.concat([x, x[..., :pad_size]], axis=-1)
+            sum_inter += 1
+
+        # reshape the input to apply RoPE
+        in_x = x.reshape([*x.shape[:-1], sum_inter, r])
+
+        # create RoPE
+        self.RoPE_init(r, rb1)
+        # apply RoPE rotation
+        rh_in_x = paddle.concat([-in_x[..., r // 2:], in_x[..., : r // 2]], axis=-1)
+        in_x = in_x * self.cos + rh_in_x * self.sin
+
+        # matmul with high rank matrix
+        out_x = in_x @ self.lora_A
+
+        # reshape the output
+        out_x = out_x.reshape([*x.shape[:-1], -1])[..., : self.out_features]
+        if out_x.shape[-1] < self.out_features:
+            repeat_time = self.out_features // out_x.shape[-1]
+            if self.out_features % out_x.shape[-1] != 0:
+                repeat_time += 1
+            out_x = paddle.concat([out_x] * repeat_time, axis=-1)[..., : self.out_features]
+
+        return out_x
+
+    def get_delta_weight(self):
+        # compute the delta weight，which is used to merge weights
+        if self.lora_use_mixer:
+            delta_weight = self.lora_A @ self.lora_AB @ self.lora_B * self.scaling
+        elif self.use_mora:
+            r = self.r
+            # compute padding
+            pad_size = r - self.in_features % r if self.in_features % r != 0 else 0
+            # initialize weights
+            w = paddle.zeros([self.in_features + pad_size, self.in_features], dtype=self.lora_A.dtype)
+            # Count the number of tiles
+            rb1 = self.in_features // r if self.in_features % r == 0 else self.in_features // r + 1
+            rb2 = self.out_features // r if self.out_features % r == 0 else self.out_features // r + 1
+            # create RoPE
+            self.RoPE_init(r, rb1)
+            # create the weights after rotation
+            aw2 = paddle.concat([self.lora_A[:, r // 2:], -self.lora_A[:, : r // 2]], axis=1)
+            # apply RoPE
+            for i in range(rb1 - 1):
+                w[i * r: (i + 1) * r, i * r: (i + 1) * r] = aw2 * self.sin[:, i] + self.lora_A * self.cos[:, i]
+            # Process the last chunk that may be incomplete
+            i = rb1 - 1
+            w[i * r:, i * r:] = (aw2 * self.sin[:, i] + self.lora_A * self.cos[:, i])[:, : r - pad_size]
+            # padding
+            if pad_size > 0:
+                w[i * r:, :pad_size] = (aw2 * self.sin[:, i] + self.lora_A * self.cos[:, i])[:, r - pad_size:]
+            # reshape the weights
+            if self.in_features < self.out_features:
+                w = paddle.concat([w] * rb2, axis=0)[: self.out_features]
+            else:
+                w = w[: self.out_features]
+            final_weight = w
+            delta_weight = final_weight.T
+        else:
+            delta_weight = self.lora_A @ self.lora_B * self.scaling
+
+        return delta_weight
+
     def merge(self):
         if not self.merged:
-            if self.lora_use_mixer:
-                new_weight = self.weight + self.lora_A @ self.lora_AB @ self.lora_B * self.scaling
-            elif self.use_mora:
-                delta_weight = self.get_delta_weight()
-                new_weight = self.weight + delta_weight
-            else:
-                new_weight = self.weight + self.lora_A @ self.lora_B * self.scaling
+            delta_weight = self.get_delta_weight()
+            new_weight = self.weight + delta_weight
             self.weight.set_value(new_weight)
             self.merged = True
 
     def unmerge(self):
         if self.merged:
-            if self.lora_use_mixer:
-                new_weight = self.weight - self.lora_A @ self.lora_AB @ self.lora_B * self.scaling
-            elif self.use_mora:
-                delta_weight = self.get_delta_weight()
-                new_weight = self.weight - delta_weight
-            else:
-                new_weight = self.weight - self.lora_A @ self.lora_B * self.scaling
+            delta_weight = self.get_delta_weight()
+            new_weight = self.weight - delta_weight
             self.weight.set_value(new_weight)
             self.merged = False
 
@@ -311,24 +286,25 @@ class LoRALinear(nn.Linear):
 
 class RowParallelLoRALinear(RowParallelLinear):
     def __init__(
-        self,
-        in_features: int,
-        out_features: int,
-        r: int = 0,
-        lora_alpha: int = 1,
-        lora_dropout: float = 0.0,
-        rslora: bool = False,
-        lora_plus_scale: float = 1.0,
-        use_quick_lora: bool = False,
-        pissa: bool = False,
-        **kwargs
+            self,
+            in_features: int,
+            out_features: int,
+            r: int = 0,
+            lora_alpha: int = 1,
+            lora_dropout: float = 0.0,
+            rslora: bool = False,
+            lora_plus_scale: float = 1.0,
+            use_quick_lora: bool = False,
+            pissa: bool = False,
+            use_mora: bool = False,
+            **kwargs
     ):
         RowParallelLinear.__init__(self, in_features, out_features, **kwargs)
         if not isinstance(r, int) or r <= 0:
             raise ValueError("Lora rank r should be a positive integer")
 
-        if pissa:
-            raise ValueError("Pissa is not supported in model parallel by now")
+        if pissa or use_mora:
+            raise ValueError("Pissa or Mora is not supported in model parallel by now")
 
         self.r = r
         self.lora_alpha = lora_alpha
@@ -464,16 +440,16 @@ class RowParallelLoRALinear(RowParallelLinear):
 
 class RowSequenceParallelLoRALinear(RowSequenceParallelLinear):
     def __init__(
-        self,
-        in_features: int,
-        out_features: int,
-        r: int = 0,
-        lora_alpha: int = 1,
-        lora_dropout: float = 0.0,
-        rslora: bool = False,
-        lora_plus_scale: float = 1.0,
-        use_quick_lora: bool = False,
-        **kwargs
+            self,
+            in_features: int,
+            out_features: int,
+            r: int = 0,
+            lora_alpha: int = 1,
+            lora_dropout: float = 0.0,
+            rslora: bool = False,
+            lora_plus_scale: float = 1.0,
+            use_quick_lora: bool = False,
+            **kwargs
     ):
         RowSequenceParallelLinear.__init__(self, in_features, out_features, **kwargs)
         if not isinstance(r, int) or r <= 0:
@@ -575,25 +551,26 @@ class RowSequenceParallelLoRALinear(RowSequenceParallelLinear):
 
 class ColumnParallelLoRALinear(ColumnParallelLinear):
     def __init__(
-        self,
-        in_features: int,
-        out_features: int,
-        r: int = 0,
-        lora_alpha: int = 1,
-        lora_dropout: float = 0.0,
-        rslora: bool = False,
-        lora_plus_scale: float = 1.0,
-        lora_A_weight_attr: Optional[paddle.ParamAttr] = None,
-        use_quick_lora: bool = False,
-        pissa: bool = False,
-        **kwargs
+            self,
+            in_features: int,
+            out_features: int,
+            r: int = 0,
+            lora_alpha: int = 1,
+            lora_dropout: float = 0.0,
+            rslora: bool = False,
+            lora_plus_scale: float = 1.0,
+            lora_A_weight_attr: Optional[paddle.ParamAttr] = None,
+            use_quick_lora: bool = False,
+            pissa: bool = False,
+            use_mora: bool = False,
+            **kwargs
     ):
         ColumnParallelLinear.__init__(self, in_features, out_features, **kwargs)
         if not isinstance(r, int) or r <= 0:
             raise ValueError("Lora rank r should be a positive integer")
 
-        if pissa:
-            raise ValueError("Pissa is not supported in model parallel by now")
+        if pissa or use_mora:
+            raise ValueError("Pissa or Mora is not supported in model parallel by now")
 
         self.r = r
         self.lora_alpha = lora_alpha
@@ -710,17 +687,17 @@ class ColumnParallelLoRALinear(ColumnParallelLinear):
 
 class ColumnSequenceParallelLoRALinear(ColumnSequenceParallelLinear):
     def __init__(
-        self,
-        in_features: int,
-        out_features: int,
-        r: int = 0,
-        lora_alpha: int = 1,
-        lora_dropout: float = 0.0,
-        rslora: bool = False,
-        lora_plus_scale: float = 1.0,
-        lora_A_weight_attr: Optional[paddle.ParamAttr] = None,
-        use_quick_lora: bool = False,
-        **kwargs
+            self,
+            in_features: int,
+            out_features: int,
+            r: int = 0,
+            lora_alpha: int = 1,
+            lora_dropout: float = 0.0,
+            rslora: bool = False,
+            lora_plus_scale: float = 1.0,
+            lora_A_weight_attr: Optional[paddle.ParamAttr] = None,
+            use_quick_lora: bool = False,
+            **kwargs
     ):
         ColumnSequenceParallelLinear.__init__(self, in_features, out_features, **kwargs)
         if not isinstance(r, int) or r <= 0:
@@ -825,14 +802,14 @@ class ColumnSequenceParallelLoRALinear(ColumnSequenceParallelLinear):
 class LoRAConv2D(nn.Conv2D):
     # LoRA implemented in a dense layer
     def __init__(
-        self,
-        in_channels,
-        out_channels,
-        kernel_size,
-        r: int = 0,
-        lora_alpha: int = 1,
-        lora_dropout: float = 0.0,
-        **kwargs
+            self,
+            in_channels,
+            out_channels,
+            kernel_size,
+            r: int = 0,
+            lora_alpha: int = 1,
+            lora_dropout: float = 0.0,
+            **kwargs
     ):
         nn.Conv2D.__init__(self, in_channels, out_channels, kernel_size, **kwargs)
         if not isinstance(r, int) or r <= 0:
@@ -889,11 +866,11 @@ class LoRAConv2D(nn.Conv2D):
             else:
                 # conv2d 3x3
                 delta_weight = (
-                    F.conv2d(
-                        weight_A.transpose([1, 0, 2, 3]),
-                        weight_B,
-                    ).transpose([1, 0, 2, 3])
-                    * self.scaling
+                        F.conv2d(
+                            weight_A.transpose([1, 0, 2, 3]),
+                            weight_B,
+                        ).transpose([1, 0, 2, 3])
+                        * self.scaling
                 )
             # Make sure that the weights are not merged
             new_weight = self.weight - delta_weight
@@ -912,11 +889,11 @@ class LoRAConv2D(nn.Conv2D):
             else:
                 # conv2d 3x3
                 delta_weight = (
-                    F.conv2d(
-                        weight_A.transpose([1, 0, 2, 3]),
-                        weight_B,
-                    ).transpose([1, 0, 2, 3])
-                    * self.scaling
+                        F.conv2d(
+                            weight_A.transpose([1, 0, 2, 3]),
+                            weight_B,
+                        ).transpose([1, 0, 2, 3])
+                        * self.scaling
                 )
             # Merge the weights and mark it
             new_weight = self.weight + delta_weight
@@ -928,8 +905,8 @@ class LoRAConv2D(nn.Conv2D):
         result = super().forward(input)
         if not self.merged and not self.disable_lora:
             result += (
-                self.lora_B_forward(self.lora_A_forward(self.lora_dropout(input.cast(dtype=self.lora_A.dtype))))
-                * self.scaling
+                    self.lora_B_forward(self.lora_A_forward(self.lora_dropout(input.cast(dtype=self.lora_A.dtype))))
+                    * self.scaling
             )
         result = result.cast(dtype=previous_dtype)
         return result
