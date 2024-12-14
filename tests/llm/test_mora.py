@@ -71,7 +71,7 @@ class MoraTest(LLMTest, unittest.TestCase):
             "output_path": mora_config["output_dir"],
         }
         with argv_context_guard(merge_lora_weights_config):
-            from tools.merge_mora_params import merge
+            from tools.merge_lora_params import merge
 
             merge()
 
