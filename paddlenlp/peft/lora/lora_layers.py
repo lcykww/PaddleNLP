@@ -126,11 +126,10 @@ class LoRALinear(nn.Linear):
                 ),
             )
         self.apply_pissa = False
-
-        if not rslora and not pissa:
-            self.scaling = self.lora_alpha / self.r
-        elif pissa or use_mora:
+        if use_mora or pissa:
             self.scaling = 1.0
+        elif not rslora:
+            self.scaling = self.lora_alpha / self.r
         else:
             self.scaling = self.lora_alpha / math.sqrt(self.r)
 
