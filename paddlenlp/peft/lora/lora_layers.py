@@ -3,7 +3,7 @@
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
-# mat
+#
 #     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
@@ -98,6 +98,12 @@ class LoRALinear(nn.Linear):
             )
             self.cos = None
             self.sin = None
+            # Count the number of tiles
+            self.rb1 = self.in_features // self.r if self.in_features % self.r == 0 else self.in_features // self.r + 1
+            self.rb2 = (
+                self.out_features // self.r if self.out_features % self.r == 0 else self.out_features // self.r + 1
+            )
+            self.rope_init()
         else:
             self.lora_A = self.create_parameter(
                 shape=[in_features, r],
@@ -157,10 +163,10 @@ class LoRALinear(nn.Linear):
         weight = res.astype(dtype)
         self.weight.set_value(weight)
 
-    def RoPE_init(self, r, rb1):
+    def rope_init(self):
         if self.cos is None or self.sin is None:
-            inv_freq = 1.0 / (10000 ** (paddle.arange(0, r, 2, dtype=paddle.float32) / r))
-            t = paddle.arange(rb1, dtype=paddle.float32)
+            inv_freq = 1.0 / (10000 ** (paddle.arange(0, self.r, 2, dtype=paddle.float32) / self.r))
+            t = paddle.arange(self.rb1, dtype=paddle.float32)
             freqs = t.unsqueeze(1) @ inv_freq.unsqueeze(0)
             emb = paddle.concat([freqs, freqs], axis=-1)
             self.cos = paddle.unsqueeze(paddle.cos(emb), axis=0).astype(self._dtype)
@@ -175,7 +181,7 @@ class LoRALinear(nn.Linear):
 
         # Calculate grouping
         sum_inter = self.in_features // r
-        rb1 = self.in_features // r if self.in_features % r == 0 else self.in_features // r + 1
+
         # padding
         if self.in_features % r != 0:
             pad_size = r - self.in_features % r
@@ -185,8 +191,6 @@ class LoRALinear(nn.Linear):
         # reshape the input to apply RoPE
         in_x = x.reshape([*x.shape[:-1], sum_inter, r])
 
-        # create RoPE
-        self.RoPE_init(r, rb1)
         # apply RoPE rotation
         rh_in_x = paddle.concat([-in_x[..., r // 2 :], in_x[..., : r // 2]], axis=-1)
         in_x = in_x * self.cos + rh_in_x * self.sin
@@ -204,41 +208,43 @@ class LoRALinear(nn.Linear):
 
         return out_x
 
-    def get_delta_weight(self):
+    def get_delta_weight(self, lora_A=None, lora_B=None, lora_AB=None):
         # compute the delta weight，which is used to merge weights
         if self.lora_use_mixer:
-            delta_weight = self.lora_A @ self.lora_AB @ self.lora_B * self.scaling
+            lora_A = lora_A if lora_A is not None else self.lora_A
+            lora_B = lora_B if lora_B is not None else self.lora_B
+            lora_AB = lora_AB if lora_AB is not None else self.lora_AB
+            delta_weight = lora_A @ lora_AB @ lora_B * self.scaling
         elif self.use_mora:
+            lora_A = lora_A if lora_A is not None else self.lora_A
             r = self.r
             # compute padding
             pad_size = r - self.in_features % r if self.in_features % r != 0 else 0
             # initialize weights
-            w = paddle.zeros([self.in_features + pad_size, self.in_features], dtype=self.lora_A.dtype)
-            # Count the number of tiles
-            rb1 = self.in_features // r if self.in_features % r == 0 else self.in_features // r + 1
-            rb2 = self.out_features // r if self.out_features % r == 0 else self.out_features // r + 1
-            # create RoPE
-            self.RoPE_init(r, rb1)
+            w = paddle.zeros([self.in_features + pad_size, self.in_features], dtype=lora_A.dtype)
+
             # create the weights after rotation
-            aw2 = paddle.concat([self.lora_A[:, r // 2 :], -self.lora_A[:, : r // 2]], axis=1)
+            aw2 = paddle.concat([lora_A[:, r // 2 :], -lora_A[:, : r // 2]], axis=-1)
             # apply RoPE
-            for i in range(rb1 - 1):
-                w[i * r : (i + 1) * r, i * r : (i + 1) * r] = aw2 * self.sin[:, i] + self.lora_A * self.cos[:, i]
+            for i in range(self.rb1 - 1):
+                w[i * r : (i + 1) * r, i * r : (i + 1) * r] = aw2 * self.sin[:, i] + lora_A * self.cos[:, i]
             # Process the last chunk that may be incomplete
-            i = rb1 - 1
-            w[i * r :, i * r :] = (aw2 * self.sin[:, i] + self.lora_A * self.cos[:, i])[:, : r - pad_size]
+            i = self.rb1 - 1
+            w[i * r :, i * r :] = (aw2 * self.sin[:, i] + lora_A * self.cos[:, i])[:, : r - pad_size]
             # padding
             if pad_size > 0:
-                w[i * r :, :pad_size] = (aw2 * self.sin[:, i] + self.lora_A * self.cos[:, i])[:, r - pad_size :]
+                w[i * r :, :pad_size] = (aw2 * self.sin[:, i] + lora_A * self.cos[:, i])[:, r - pad_size :]
             # reshape the weights
             if self.in_features < self.out_features:
-                w = paddle.concat([w] * rb2, axis=0)[: self.out_features]
+                w = paddle.concat([w] * self.rb2, axis=0)[: self.out_features]
             else:
                 w = w[: self.out_features]
             final_weight = w
             delta_weight = final_weight.T
         else:
-            delta_weight = self.lora_A @ self.lora_B * self.scaling
+            lora_A = lora_A if lora_A is not None else self.lora_A
+            lora_B = lora_B if lora_B is not None else self.lora_B
+            delta_weight = lora_A @ lora_B * self.scaling
 
         return delta_weight
 

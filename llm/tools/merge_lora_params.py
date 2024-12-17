@@ -112,10 +112,21 @@ def lora_process(name, layer, lora_config, state_dict, device, lora_state_dict=N
         lora_A = lora_A.astype("float32")
         if not use_mora:
             lora_B = lora_B.astype("float32")
-        delta_weight = layer.get_delta_weight()
+        if lora_use_mixer:
+            lora_AB = lora_AB.astype(lora_config.dtype)
+            delta_weight = layer.get_delta_weight(lora_A, lora_B, lora_AB)
+        elif use_mora:
+            delta_weight = layer.get_delta_weight(lora_A)
+        else:
+            delta_weight = layer.get_delta_weight(lora_A, lora_B)
         out = (weight + delta_weight).astype(lora_config.dtype)
     else:
-        delta_weight = layer.get_delta_weight()
+        if lora_use_mixer:
+            delta_weight = layer.get_delta_weight(lora_A, lora_B, lora_AB)
+        elif use_mora:
+            delta_weight = layer.get_delta_weight(lora_A)
+        else:
+            delta_weight = layer.get_delta_weight(lora_A, lora_B)
         out = (weight + delta_weight).cpu()
 
     state_dict[name + ".weight"] = out
@@ -218,11 +229,11 @@ def merge():
         lora_info = {}
         for sublayer_name, sublayer in model.named_sublayers():
             if isinstance(sublayer, paddle.nn.Linear):
-                for p in sublayer.parameters():
-                    if "lora_A" in p.name:
-                        lora_info[p.name[:-7]] = sublayer
+                for param_name, param in sublayer.named_parameters():
+                    if "lora_A" in param_name:
+                        lora_info[sublayer_name[6:]] = sublayer
 
-        for name, layer in lora_info:
+        for name, layer in lora_info.items():
             lora_process(name, layer, lora_config, model_state_dict, args.device)
 
     logger.info("Begin to save merged model")
