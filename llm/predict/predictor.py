@@ -27,7 +27,10 @@ import paddle.incubate.multiprocessing as mp
 from paddle.base.framework import in_cinn_mode, in_pir_executor_mode, use_pir_api
 from paddle.distributed import fleet
 
-from paddlenlp.experimental.transformers import InferenceWithReferenceProposer
+try:
+    from paddlenlp.experimental.transformers import InferenceWithReferenceProposer
+except:
+    pass
 from paddlenlp.generation import GenerationConfig, TextIteratorStreamer
 from paddlenlp.peft import LoRAConfig, LoRAModel, PrefixConfig, PrefixModelForCausalLM
 from paddlenlp.taskflow.utils import static_mode_guard
@@ -45,7 +48,7 @@ from paddlenlp.transformers import (
     PretrainedTokenizer,
 )
 from paddlenlp.trl import llm_utils
-from paddlenlp.utils.env import MAX_BSZ, MAX_DRAFT_TOKENS, SPECULATE_MAX_BSZ
+from paddlenlp.utils.env import MAX_BSZ, MAX_DRAFT_TOKENS
 from paddlenlp.utils.import_utils import is_paddlenlp_ops_available
 from paddlenlp.utils.log import logger
 
@@ -1039,7 +1042,7 @@ class DygraphBlockInferencePredictor(BlockInferencePredictorMixin):
             output_tensor_shape = [MAX_BSZ + 2, 1]
         else:
             read_res_func = llm_utils.speculate_read_res
-            output_tensor_shape = [SPECULATE_MAX_BSZ * MAX_DRAFT_TOKENS + SPECULATE_MAX_BSZ + 2, 1]
+            output_tensor_shape = [MAX_BSZ * MAX_DRAFT_TOKENS + MAX_BSZ + 2, 1]
 
         read_res_process = mp.Process(
             target=read_res_func, args=[self.model_name_or_path, tensor_queue, result_queue, done_event]
@@ -1186,7 +1189,7 @@ class StaticGraphBlockInferencePredictor(BlockInferencePredictorMixin):
             output_tensor_shape = [MAX_BSZ + 2, 1]
         else:
             read_res_func = llm_utils.speculate_read_res
-            output_tensor_shape = [SPECULATE_MAX_BSZ * MAX_DRAFT_TOKENS + SPECULATE_MAX_BSZ + 2, 1]
+            output_tensor_shape = [MAX_BSZ * MAX_DRAFT_TOKENS + MAX_BSZ + 2, 1]
 
         read_res_process = mp.Process(
             target=read_res_func, args=[self.model_name_or_path, tensor_queue, result_queue, done_event]
@@ -1293,9 +1296,7 @@ def create_predictor(
     predictor_args: PredictorArgument,
     model_args: ModelArgument,
 ):
-    tokenizer = AutoTokenizer.from_pretrained(
-        predictor_args.model_name_or_path,
-    )
+    tokenizer = AutoTokenizer.from_pretrained(predictor_args.model_name_or_path)
     # init chat_template for tokenizer
     llm_utils.init_chat_template(tokenizer, predictor_args.model_name_or_path, predictor_args.chat_template)
 
